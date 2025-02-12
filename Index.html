@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>QR Code Scanner</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            background-color: #f4f4f9;
+        }
+
+        #scanner-container {
+            width: 90%;
+            max-width: 500px;
+            margin: 20px;
+            border: 2px dashed #6c63ff;
+            padding: 20px;
+            border-radius: 10px;
+            background: white;
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
+        }
+
+        video {
+            width: 100%;
+            border-radius: 10px;
+            background-color: black; /* Ensure video area is visible */
+        }
+
+        #output {
+            margin-top: 20px;
+            padding: 10px;
+            border: 1px solid #ccc;
+            background: #fff;
+            border-radius: 5px;
+            text-align: center;
+        }
+
+        #output p {
+            margin: 0;
+            font-size: 16px;
+        }
+
+        #camera-selector {
+            margin: 10px 0;
+            padding: 5px;
+            border-radius: 5px;
+            border: 1px solid #ccc;
+        }
+
+        #scan-button {
+            margin-top: 10px;
+            padding: 10px 20px;
+            background-color: #6c63ff;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+
+        #scan-button:hover {
+            background-color: #5750d9;
+        }
+    </style>
+</head>
+<body>
+    <div id="scanner-container">
+        <video id="qr-video" playsinline autoplay muted></video>
+        <button id="scan-button">Scan QR Code</button>
+        <div id="output">
+            <p>Scan a QR code to see the result.</p>
+        </div>
+    </div>
+
+    <script>
+        const videoElement = document.getElementById('qr-video');
+        const outputElement = document.getElementById('output');
+        const cameraSelector = document.createElement('select');
+        const scanButton = document.getElementById('scan-button');
+        cameraSelector.id = 'camera-selector';
+        document.body.insertBefore(cameraSelector, document.getElementById('scanner-container'));
+
+        let currentStream = null;
+
+        function startCamera(cameraId) {
+            if (currentStream) {
+                currentStream.getTracks().forEach(track => track.stop());
+            }
+
+            navigator.mediaDevices.getUserMedia({ video: { deviceId: cameraId } })
+                .then(stream => {
+                    currentStream = stream;
+                    videoElement.srcObject = stream;
+                    videoElement.play();
+                })
+                .catch(err => {
+                    outputElement.innerHTML = `<p>Error accessing camera: ${err.message}</p>`;
+                    console.error('Error accessing camera:', err);
+                });
+        }
+
+        async function captureAndReadQR() {
+            const canvas = document.createElement('canvas');
+            const context = canvas.getContext('2d');
+
+            canvas.width = videoElement.videoWidth;
+            canvas.height = videoElement.videoHeight;
+            context.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
+
+            const dataUrl = canvas.toDataURL('image/png');
+            const formData = new FormData();
+            formData.append('file', dataURItoBlob(dataUrl));
+
+            try {
+                const response = await fetch('https://api.qrserver.com/v1/read-qr-code/', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const result = await response.json();
+                if (result[0] && result[0].symbol[0].data) {
+                    outputElement.innerHTML = `<p>QR Code detected: ${result[0].symbol[0].data}</p>`;
+                } else {
+                    outputElement.innerHTML = '<p>No QR code detected. Try again.</p>';
+                }
+            } catch (err) {
+                outputElement.innerHTML = `<p>Error reading QR code: ${err.message}</p>`;
+                console.error('Error reading QR code:', err);
+            }
+        }
+
+        function dataURItoBlob(dataURI) {
+            const byteString = atob(dataURI.split(',')[1]);
+            const mimeString = dataURI.split(',')[0].split(':')[1].split(';')[0];
+            const ab = new ArrayBuffer(byteString.length);
+            const ia = new Uint8Array(ab);
+            for (let i = 0; i < byteString.length; i++) {
+                ia[i] = byteString.charCodeAt(i);
+            }
+            return new Blob([ab], { type: mimeString });
+        }
+
+        navigator.mediaDevices.enumerateDevices().then(devices => {
+            const videoDevices = devices.filter(device => device.kind === 'videoinput');
+
+            if (videoDevices.length > 0) {
+                videoDevices.forEach((device, index) => {
+                    const option = document.createElement('option');
+                    option.value = device.deviceId;
+                    option.textContent = device.label || `Camera ${index + 1}`;
+                    cameraSelector.appendChild(option);
+                });
+
+                cameraSelector.addEventListener('change', () => {
+                    const selectedCameraId = cameraSelector.value;
+                    startCamera(selectedCameraId);
+                });
+
+                const rearCamera = videoDevices.find(device => device.label.toLowerCase().includes('back'));
+                if (rearCamera) {
+                    startCamera(rearCamera.deviceId);
+                    cameraSelector.value = rearCamera.deviceId;
+                } else {
+                    startCamera(videoDevices[0].deviceId);
+                    cameraSelector.value = videoDevices[0].deviceId;
+                }
+            } else {
+                outputElement.innerHTML = '<p>No cameras found.</p>';
+            }
+        }).catch(err => {
+            outputElement.innerHTML = `<p>Error fetching camera devices: ${err.message}</p>`;
+            console.error('Error fetching camera devices:', err);
+        });
+
+        scanButton.addEventListener('click', captureAndReadQR);
+
+        window.addEventListener('beforeunload', () => {
+            if (currentStream) {
+                currentStream.getTracks().forEach(track => track.stop());
+            }
+        });
+    </script>
+</body>
+</html>
