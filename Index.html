@@ -83,8 +83,10 @@
                 scanBerulang();
 
             } catch (err) {
-                alert("Gagal mengakses kamera. Pastikan Anda memberikan izin akses kamera.");
-                console.error(err);
+                // Tampilkan error aslinya ke layar HP agar kita tahu masalahnya
+                alert("GAGAL AKSES KAMERA!\n\nJenis Error: " + err.name + "\nPesan: " + err.message);
+                statusTeks.innerHTML = "Error Kamera: " + err.message;
+                statusTeks.style.color = "red";
             }
         }
 
