@@ -1,192 +1,180 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="id">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>QR Code Scanner</title>
+    <title>Absensi Organisasi (Native Scanner)</title>
     <style>
-        body {
-            font-family: Arial, sans-serif;
-            margin: 0;
-            padding: 0;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            height: 100vh;
-            background-color: #f4f4f9;
-        }
-
-        #scanner-container {
-            width: 90%;
-            max-width: 500px;
-            margin: 20px;
-            border: 2px dashed #6c63ff;
-            padding: 20px;
-            border-radius: 10px;
-            background: white;
-            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
-        }
-
-        video {
-            width: 100%;
-            border-radius: 10px;
-            background-color: black; /* Ensure video area is visible */
-        }
-
-        #output {
-            margin-top: 20px;
-            padding: 10px;
-            border: 1px solid #ccc;
-            background: #fff;
-            border-radius: 5px;
-            text-align: center;
-        }
-
-        #output p {
-            margin: 0;
-            font-size: 16px;
-        }
-
-        #camera-selector {
-            margin: 10px 0;
-            padding: 5px;
-            border-radius: 5px;
-            border: 1px solid #ccc;
-        }
-
-        #scan-button {
-            margin-top: 10px;
-            padding: 10px 20px;
-            background-color: #6c63ff;
-            color: white;
-            border: none;
-            border-radius: 5px;
-            cursor: pointer;
-            font-size: 16px;
-        }
-
-        #scan-button:hover {
-            background-color: #5750d9;
-        }
+        body { font-family: sans-serif; text-align: center; padding: 20px; background: #f4f4f4; margin: 0; }
+        #video-preview { width: 100%; max-width: 500px; background: #000; border-radius: 8px; transform: scaleX(-1); /* Efek cermin saat pakai kamera depan, akan otomatis mati di kamera belakang */ }
+        .container { margin-top: 20px; background: white; padding: 15px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+        button { padding: 12px 20px; font-size: 16px; cursor: pointer; background: #007bff; color: white; border: none; border-radius: 5px; margin: 5px; width: 45%; font-weight: bold;}
+        .btn-danger { background: #dc3545; }
+        .btn-success { background: #28a745; width: 90%; margin-top: 10px;}
+        #result-list { text-align: left; max-height: 250px; overflow-y: auto; border-top: 1px solid #ddd; padding-top: 10px; margin-top: 15px; }
+        .log-item { border-bottom: 1px solid #eee; padding: 8px 0; font-size: 14px; }
+        #status-teks { font-size: 14px; color: #666; margin-bottom: 10px; }
     </style>
 </head>
 <body>
-    <div id="scanner-container">
-        <video id="qr-video" playsinline autoplay muted></video>
-        <button id="scan-button">Scan QR Code</button>
-        <div id="output">
-            <p>Scan a QR code to see the result.</p>
-        </div>
+
+    <h2>Absensi QR/Barcode</h2>
+    
+    <!-- Area Video dari Kamera HP -->
+    <video id="video-preview" autoplay playsinline></video>
+    <div id="status-teks">Kamera belum menyala</div>
+    
+    <div class="container">
+        <!-- Tombol Kontrol -->
+        <button onclick="mulaiKamera()">Nyalakan Kamera</button>
+        <button onclick="stopKamera()" class="btn-danger">Matikan Kamera</button>
+        <br>
+        <button onclick="exportToCSV()" class="btn-success">⬇️ Download Data (CSV)</button>
+        <button onclick="clearData()" class="btn-danger" style="width: 90%; margin-top: 10px;">🗑️ Hapus Semua Riwayat</button>
+        
+        <h3 style="text-align: left; margin-bottom: 5px;">Riwayat Absen:</h3>
+        <div id="result-list"></div>
     </div>
 
     <script>
-        const videoElement = document.getElementById('qr-video');
-        const outputElement = document.getElementById('output');
-        const cameraSelector = document.createElement('select');
-        const scanButton = document.getElementById('scan-button');
-        cameraSelector.id = 'camera-selector';
-        document.body.insertBefore(cameraSelector, document.getElementById('scanner-container'));
+        // --- 1. INISIALISASI DATABASE LOKAL ---
+        let attendanceData = JSON.parse(localStorage.getItem('absensi_anggota')) || [];
+        const video = document.getElementById('video-preview');
+        const statusTeks = document.getElementById('status-teks');
+        
+        let isScanning = false;
+        let lastScanned = ""; // Mencegah barcode disinggung 2 kali berturut-turut
+        let streamValid = null;
 
-        let currentStream = null;
-
-        function startCamera(cameraId) {
-            if (currentStream) {
-                currentStream.getTracks().forEach(track => track.stop());
-            }
-
-            navigator.mediaDevices.getUserMedia({ video: { deviceId: cameraId } })
-                .then(stream => {
-                    currentStream = stream;
-                    videoElement.srcObject = stream;
-                    videoElement.play();
-                })
-                .catch(err => {
-                    outputElement.innerHTML = `<p>Error accessing camera: ${err.message}</p>`;
-                    console.error('Error accessing camera:', err);
-                });
+        function updateUI() {
+            const list = document.getElementById('result-list');
+            list.innerHTML = '';
+            // Tampilkan dari yang paling baru (di reverse)
+            [...attendanceData].reverse().forEach((item, index) => {
+                list.innerHTML += `<div class="log-item"><b>${item.id}</b> <br><small style="color:#888;">${item.waktu}</small></div>`;
+            });
         }
 
-        async function captureAndReadQR() {
-            const canvas = document.createElement('canvas');
-            const context = canvas.getContext('2d');
-
-            canvas.width = videoElement.videoWidth;
-            canvas.height = videoElement.videoHeight;
-            context.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
-
-            const dataUrl = canvas.toDataURL('image/png');
-            const formData = new FormData();
-            formData.append('file', dataURItoBlob(dataUrl));
+        // --- 2. FUNGSI MENYALAKAN KAMERA ---
+        async function mulaiKamera() {
+            // Cek apakah browser HP mendukung fitur Native Barcode
+            if (!("BarcodeDetector" in window)) {
+                alert("Browser HP Anda tidak mendukung pemindai tanpa internet ini. Pastikan Anda menggunakan Google Chrome versi terbaru di Android.");
+                return;
+            }
 
             try {
-                const response = await fetch('https://api.qrserver.com/v1/read-qr-code/', {
-                    method: 'POST',
-                    body: formData
+                // Meminta akses kamera belakang HP
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { facingMode: "environment" } 
                 });
+                
+                // Jika pakai kamera belakang, matikan efek cermin
+                video.style.transform = "scaleX(1)";
+                video.srcObject = stream;
+                streamValid = stream;
+                
+                video.play();
+                isScanning = true;
+                statusTeks.innerHTML = "✅ Kamera aktif. Arahkan ke Barcode/QR.";
+                statusTeks.style.color = "green";
+                
+                // Mulai deteksi barcode secara berulang
+                scanBerulang();
 
-                const result = await response.json();
-                if (result[0] && result[0].symbol[0].data) {
-                    outputElement.innerHTML = `<p>QR Code detected: ${result[0].symbol[0].data}</p>`;
-                } else {
-                    outputElement.innerHTML = '<p>No QR code detected. Try again.</p>';
-                }
             } catch (err) {
-                outputElement.innerHTML = `<p>Error reading QR code: ${err.message}</p>`;
-                console.error('Error reading QR code:', err);
+                alert("Gagal mengakses kamera. Pastikan Anda memberikan izin akses kamera.");
+                console.error(err);
             }
         }
 
-        function dataURItoBlob(dataURI) {
-            const byteString = atob(dataURI.split(',')[1]);
-            const mimeString = dataURI.split(',')[0].split(':')[1].split(';')[0];
-            const ab = new ArrayBuffer(byteString.length);
-            const ia = new Uint8Array(ab);
-            for (let i = 0; i < byteString.length; i++) {
-                ia[i] = byteString.charCodeAt(i);
+        function stopKamera() {
+            if (streamValid) {
+                streamValid.getTracks().forEach(track => track.stop());
+                video.srcObject = null;
+                isScanning = false;
+                statusTeks.innerHTML = "Kamera dimatikan.";
+                statusTeks.style.color = "#666";
             }
-            return new Blob([ab], { type: mimeString });
         }
 
-        navigator.mediaDevices.enumerateDevices().then(devices => {
-            const videoDevices = devices.filter(device => device.kind === 'videoinput');
+        // --- 3. FUNGSI PEMINDAI UTAMA ---
+        async function scanBerulang() {
+            if (!isScanning) return;
 
-            if (videoDevices.length > 0) {
-                videoDevices.forEach((device, index) => {
-                    const option = document.createElement('option');
-                    option.value = device.deviceId;
-                    option.textContent = device.label || `Camera ${index + 1}`;
-                    cameraSelector.appendChild(option);
-                });
-
-                cameraSelector.addEventListener('change', () => {
-                    const selectedCameraId = cameraSelector.value;
-                    startCamera(selectedCameraId);
-                });
-
-                const rearCamera = videoDevices.find(device => device.label.toLowerCase().includes('back'));
-                if (rearCamera) {
-                    startCamera(rearCamera.deviceId);
-                    cameraSelector.value = rearCamera.deviceId;
-                } else {
-                    startCamera(videoDevices[0].deviceId);
-                    cameraSelector.value = videoDevices[0].deviceId;
+            // Membaca format QR Code dan Barcode pada umumnya
+            const barcodeDetector = new BarcodeDetector({ 
+                formats: ["qr_code", "ean_13", "code_128", "code_39"] 
+            });
+            
+            try {
+                // Menganalisis frame dari video
+                const barcodes = await barcodeDetector.detect(video);
+                
+                if (barcodes.length > 0) {
+                    const idAnggota = barcodes[0].rawValue;
+                    
+                    // Jika barcode berbeda dengan yang terakhir kali discan dalam 3 detik terakhir
+                    if (idAnggota !== lastScanned) {
+                        lastScanned = idAnggota;
+                        simpanDataAbsen(idAnggota);
+                        
+                        // Jeda 3 detik agar tidak dobel scan ID yang sama berturut-turut
+                        setTimeout(() => { lastScanned = ""; }, 3000); 
+                    }
                 }
-            } else {
-                outputElement.innerHTML = '<p>No cameras found.</p>';
+            } catch (e) {
+                // Abaikan error background (misal frame blur sesaat)
             }
-        }).catch(err => {
-            outputElement.innerHTML = `<p>Error fetching camera devices: ${err.message}</p>`;
-            console.error('Error fetching camera devices:', err);
-        });
 
-        scanButton.addEventListener('click', captureAndReadQR);
+            // Ulangi terus menerus seperti loop
+            requestAnimationFrame(scanBerulang);
+        }
 
-        window.addEventListener('beforeunload', () => {
-            if (currentStream) {
-                currentStream.getTracks().forEach(track => track.stop());
+        // --- 4. FUNGSI PENYIMPANAN & UMPAN BALIK ---
+        function simpanDataAbsen(id) {
+            const now = new Date();
+            const timeString = now.toLocaleDateString('id-ID') + ' ' + now.toLocaleTimeString('id-ID');
+            
+            // Masukkan ke database memori
+            attendanceData.push({ id: id, waktu: timeString });
+            localStorage.setItem('absensi_anggota', JSON.stringify(attendanceData));
+            
+            // Getarkan HP (jika didukung) sebagai tanda berhasil
+            if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
+            
+            updateUI();
+            alert("✅ Berhasil Absen:\n" + id);
+        }
+
+        // --- 5. FUNGSI EKSPOR EXCEL (CSV) ---
+        function exportToCSV() {
+            if (attendanceData.length === 0) return alert("Belum ada data untuk di-download!");
+            
+            let csvContent = "data:text/csv;charset=utf-8,ID Anggota,Waktu Absen\n";
+            attendanceData.forEach(row => {
+                csvContent += `${row.id},${row.waktu}\n`;
+            });
+
+            const encodedUri = encodeURI(csvContent);
+            const link = document.createElement("a");
+            link.setAttribute("href", encodedUri);
+            link.setAttribute("download", "Absensi_Anggota.csv");
+            document.body.appendChild(link);
+            link.click();
+        }
+
+        // --- 6. HAPUS DATA ---
+        function clearData() {
+            if(confirm("AWAS! Apakah Anda yakin ingin menghapus SEMUA riwayat absensi di HP ini? Data yang terhapus tidak bisa dikembalikan.")) {
+                localStorage.removeItem('absensi_anggota');
+                attendanceData = [];
+                updateUI();
             }
-        });
+        }
+
+        // Tampilkan data yang sudah ada saat aplikasi pertama dibuka
+        updateUI();
     </script>
 </body>
 </html>
